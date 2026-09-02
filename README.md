@@ -21,6 +21,10 @@ implements the core functionality:
   (replaces the original's SQLite layer, keeping the project dependency-free).
 - **yt-dlp integration** (`internal/ytdlp`) — video metadata/quality listing and
   download via the yt-dlp CLI, wired into the download→upload pipeline.
+- **UI layer** (`internal/ui`) — animation frame sets and Apple-style message
+  formatting (progress bars, success/error templates), mirroring the original
+  project's `ui_animations.py` / `ui_apple_style.py`; wired into task progress
+  and yt-dlp completion displays.
 - **Command handlers** (`internal/bot`) — `/start`, `/help`, `/auth`, `/authmode`,
   `/revoke`, `/setfolder`, `/emptytrash`, `/download`, `/ytdl`, `/list`, `/search`,
   `/copy`, `/move`, `/delete`.
@@ -35,6 +39,7 @@ internal/gdrive/       Google Drive API client (OAuth + service account)
 internal/task/         mirror task manager (download -> upload, pause/resume/cancel)
 internal/store/        file-backed credential/task persistence
 internal/ytdlp/        yt-dlp CLI wrapper (video metadata + download)
+internal/ui/           animation frames + Apple-style message formatting
 internal/bot/          command handlers wiring the above together
 ```
 
@@ -67,10 +72,12 @@ All configuration is read from environment variables (see `.env.example`):
 
 ### Notes
 
-- The rewrite focuses on the core mirror + Drive-management surface. The original's
-  UI animation layer is intentionally left out of this pass; the task manager's
-  `UploadFunc` hook is the seam where it would be wired in. Persistence is provided
-  by `internal/store` (JSON file) in place of the original's SQLite/SQLAlchemy layer.
+- The rewrite covers the original's core mirror + Drive-management + auth +
+  persistence + yt-dlp + UI-formatting surface. The original's UI animation
+  layer is reproduced in `internal/ui` (frame sets + Apple-style formatting);
+  the task manager's `UploadFunc` hook remains the seam for deeper progress
+  integration. Persistence is provided by `internal/store` (JSON file) in place
+  of the original's SQLite/SQLAlchemy layer.
 - yt-dlp integration shells out to the `yt-dlp` CLI (set `YTDLP_BIN` to point at a
   specific binary). The interactive quality selector from the original is reproduced
   as a numbered text menu.
