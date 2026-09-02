@@ -70,6 +70,24 @@ All configuration is read from environment variables (see `.env.example`):
 | `POLL_TIMEOUT_SECONDS` | Long-poll timeout (default 30) |
 | `YTDLP_BIN` | Path to the yt-dlp binary (default: `yt-dlp` from PATH) |
 
+### Deployment (Docker)
+
+A multi-stage `Dockerfile` is provided (builds a static binary, ships it in a
+minimal Alpine image with `yt-dlp` preinstalled, runs as a non-root user, and
+mounts `/data` + `/downloads` volumes):
+
+```sh
+make docker        # docker build -t gdrive-bot .
+make docker-run    # run with your .env and local data/downloads volumes
+```
+
+Or manually:
+
+```sh
+docker build -t gdrive-bot .
+docker run --rm -it --env-file .env -v $(PWD)/data:/data -v $(PWD)/downloads:/downloads gdrive-bot
+```
+
 ### Notes
 
 - The rewrite covers the original's core mirror + Drive-management + auth +
