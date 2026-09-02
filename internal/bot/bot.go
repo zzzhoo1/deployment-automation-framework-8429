@@ -5,15 +5,20 @@ package bot
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/config"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/gdrive"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/store"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/task"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/tg"
+	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/ytdlp"
 )
 
 // Bot is the running application.
@@ -23,11 +28,14 @@ type Bot struct {
 	drive *gdrive.Client
 	tasks *task.Manager
 	store *store.Store
+	ytdlp *ytdlp.Client
 
 	pendingMu       sync.Mutex
 	pendingAuth     map[int64]string // userID -> OAuth state
 	defaultFolderMu sync.Mutex
 	defaultFolder   map[int64]string // userID -> default upload folder ID
+	pendingVideoMu  sync.Mutex
+	pendingVideo    map[int64]*ytdlp.Info // userID -> video awaiting quality choice
 }
 
 // New constructs a Bot from configuration.
@@ -45,8 +53,10 @@ func New(cfg *config.Config) (*Bot, error) {
 		tg:            tg.NewClient(cfg.BotToken),
 		drive:         drive,
 		store:         s,
+		ytdlp:         ytdlp.NewClient(cfg.YTDLPBin),
 		pendingAuth:   map[int64]string{},
 		defaultFolder: map[int64]string{},
+		pendingVideo:  map[int64]*ytdlp.Info{},
 	}
 	b.tasks = task.NewManager(cfg.DownloadDirectory, cfg.MaxConcurrentMirrors, b.upload)
 	return b, nil
@@ -109,6 +119,8 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tg.Message) {
 		b.cmdEmptyTrash(ctx, msg)
 	case "download", "dl":
 		b.cmdDownload(ctx, msg, args)
+	case "ytdl":
+		b.cmdYtDl(ctx, msg, args)
 	case "list", "ls":
 		b.cmdList(ctx, msg, args)
 	case "search", "sd":
@@ -120,6 +132,11 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tg.Message) {
 	case "delete", "del":
 		b.cmdDelete(ctx, msg, args)
 	default:
+		// A plain message that matches a pending quality choice is treated as
+		// the /ytdl quality selection step.
+		if b.tryCaptureQuality(ctx, msg) {
+			return
+		}
 		// A plain message that looks like a Google OAuth code is treated as
 		// the auth-code capture step (the user pastes the code after /auth).
 		if b.tryCaptureAuthCode(ctx, msg) {
@@ -151,6 +168,7 @@ func (b *Bot) handleCallback(ctx context.Context, q *tg.CallbackQuery) {
 func (b *Bot) cmdStart(ctx context.Context, msg *tg.Message) {
 	const text = "👋 欢迎使用 Google Drive 上传器\n\n" +
 		"📥 /download <url>  下载直链并上传到 Drive\n" +
+		"📹 /ytdl <视频链接>  下载 YouTube 等视频并上传\n" +
 		"🔐 /auth  授权 Google Drive\n" +
 		"🔑 /revoke  撤销授权\n" +
 		"⚙️ /authmode oauth|service_account  切换授权模式\n" +
@@ -314,6 +332,91 @@ func (b *Bot) cmdDelete(ctx context.Context, msg *tg.Message, args string) {
 		return
 	}
 	_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "🗑 已删除（移入回收站）"})
+}
+
+func (b *Bot) cmdYtDl(ctx context.Context, msg *tg.Message, args string) {
+	if !b.cfg.IsSudo(msg.From.ID) {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "⚠️ 需要管理员权限"})
+		return
+	}
+	if !b.ytdlp.Available() {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "⚠️ 未找到 yt-dlp 可执行文件（设置 YTDLP_BIN）"})
+		return
+	}
+	urlStr := strings.TrimSpace(args)
+	if !regexp.MustCompile(`^https?://`).MatchString(urlStr) {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "用法: /ytdl <视频链接>"})
+		return
+	}
+	info, err := b.ytdlp.Info(ctx, urlStr)
+	if err != nil {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "❌ 获取视频信息失败: " + err.Error()})
+		return
+	}
+	if len(info.Formats) == 0 {
+		// No selectable qualities: download best directly.
+		b.startYtDlDownload(ctx, msg, info, "best")
+		return
+	}
+	b.pendingVideoMu.Lock()
+	b.pendingVideo[msg.From.ID] = info
+	b.pendingVideoMu.Unlock()
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("🎬 %s\n", info.Title))
+	sb.WriteString("请选择画质（回复编号或 “best”）:\n")
+	for i, q := range info.Formats {
+		fmt.Fprintf(&sb, "%d. %s\n", i+1, q.Label)
+	}
+	sb.WriteString("0. best (最高画质)\n")
+	_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: sb.String()})
+}
+
+// startYtDlDownload downloads the chosen quality and uploads it to Drive.
+func (b *Bot) startYtDlDownload(ctx context.Context, msg *tg.Message, info *ytdlp.Info, quality string) {
+	statusID, _ := b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: fmt.Sprintf("⏳ 正在下载 %s（%s）…", info.Title, quality)})
+	go func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		path, err := b.ytdlp.Download(cctx, info.WebPageURL, quality, b.cfg.DownloadDirectory)
+		if err != nil {
+			_ = b.tg.Edit(cctx, msg.Chat.ID, statusID, "❌ yt-dlp 下载失败: "+err.Error())
+			return
+		}
+		defer os.Remove(path)
+		_ = b.tg.Edit(cctx, msg.Chat.ID, statusID, "⏳ 正在上传到 Google Drive…")
+		link, err := b.upload(cctx, msg.From.ID, path, filepath.Base(path))
+		if err != nil {
+			_ = b.tg.Edit(cctx, msg.Chat.ID, statusID, "❌ 上传失败: "+err.Error())
+			return
+		}
+		_ = b.tg.Edit(cctx, msg.Chat.ID, statusID, "✅ 完成: "+link)
+	}()
+}
+
+// tryCaptureQuality handles a plain message that is a quality choice for a
+// pending /ytdl selection. Returns true if the message was consumed.
+func (b *Bot) tryCaptureQuality(ctx context.Context, msg *tg.Message) bool {
+	b.pendingVideoMu.Lock()
+	info, ok := b.pendingVideo[msg.From.ID]
+	b.pendingVideoMu.Unlock()
+	if !ok {
+		return false
+	}
+	sel := strings.TrimSpace(strings.ToLower(msg.Text))
+	var quality string
+	if sel == "best" || sel == "0" {
+		quality = "best"
+	} else if n, err := strconv.Atoi(sel); err == nil && n >= 1 && n <= len(info.Formats) {
+		quality = info.Formats[n-1].Label
+	} else {
+		return false
+	}
+	b.pendingVideoMu.Lock()
+	delete(b.pendingVideo, msg.From.ID)
+	b.pendingVideoMu.Unlock()
+	b.startYtDlDownload(ctx, msg, info, quality)
+	return true
 }
 
 func (b *Bot) cmdUnknown(ctx context.Context, msg *tg.Message, cmd string) {

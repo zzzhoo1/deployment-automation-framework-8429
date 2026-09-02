@@ -19,9 +19,11 @@ implements the core functionality:
   with pause / resume / cancel and progress callbacks, bounded concurrency.
 - **Persistence** (`internal/store`) — file-backed credential and task store
   (replaces the original's SQLite layer, keeping the project dependency-free).
+- **yt-dlp integration** (`internal/ytdlp`) — video metadata/quality listing and
+  download via the yt-dlp CLI, wired into the download→upload pipeline.
 - **Command handlers** (`internal/bot`) — `/start`, `/help`, `/auth`, `/authmode`,
-  `/revoke`, `/setfolder`, `/emptytrash`, `/download`, `/list`, `/search`, `/copy`,
-  `/move`, `/delete`.
+  `/revoke`, `/setfolder`, `/emptytrash`, `/download`, `/ytdl`, `/list`, `/search`,
+  `/copy`, `/move`, `/delete`.
 
 ### Layout
 
@@ -32,6 +34,7 @@ internal/tg/           Telegram Bot API client
 internal/gdrive/       Google Drive API client (OAuth + service account)
 internal/task/         mirror task manager (download -> upload, pause/resume/cancel)
 internal/store/        file-backed credential/task persistence
+internal/ytdlp/        yt-dlp CLI wrapper (video metadata + download)
 internal/bot/          command handlers wiring the above together
 ```
 
@@ -60,11 +63,14 @@ All configuration is read from environment variables (see `.env.example`):
 | `SUDO_USERS` | Space/comma separated Telegram user IDs (empty = allow all) |
 | `DEFAULT_AUTH_MODE` | `oauth` or `service_account` (default `oauth`) |
 | `POLL_TIMEOUT_SECONDS` | Long-poll timeout (default 30) |
+| `YTDLP_BIN` | Path to the yt-dlp binary (default: `yt-dlp` from PATH) |
 
 ### Notes
 
 - The rewrite focuses on the core mirror + Drive-management surface. The original's
-  UI animation layer and yt-dlp integration are intentionally left out of this pass;
-  the task manager's `UploadFunc` hook is the seam where those would be wired in.
-  Persistence is provided by `internal/store` (JSON file) in place of the original's
-  SQLite/SQLAlchemy layer.
+  UI animation layer is intentionally left out of this pass; the task manager's
+  `UploadFunc` hook is the seam where it would be wired in. Persistence is provided
+  by `internal/store` (JSON file) in place of the original's SQLite/SQLAlchemy layer.
+- yt-dlp integration shells out to the `yt-dlp` CLI (set `YTDLP_BIN` to point at a
+  specific binary). The interactive quality selector from the original is reproduced
+  as a numbered text menu.
