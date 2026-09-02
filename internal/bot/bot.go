@@ -18,6 +18,7 @@ import (
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/store"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/task"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/tg"
+	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/ui"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/ytdlp"
 )
 
@@ -224,8 +225,16 @@ func (b *Bot) cmdDownload(ctx context.Context, msg *tg.Message, args string) {
 
 	sentID := int64(0)
 	onProgress := func(taskID int64, stage string, status task.Status) {
-		text := fmt.Sprintf("📥 任务 %d\n文件: %s\n状态: %s", taskID, filename, stage)
 		if id := sentID; id > 0 {
+			var text string
+			switch {
+			case strings.Contains(stage, "失败"):
+				text = ui.FormatError("任务失败", stage, "重试或检查链接")
+			case status == task.StatusDone:
+				text = ui.FormatSuccess("任务完成", "文件已上传到 Google Drive")
+			default:
+				text = ui.FormatProgress(0, 100, uiStatusForStage(stage), filename, "")
+			}
 			_ = b.tg.Edit(context.Background(), msg.Chat.ID, id, text)
 		}
 	}
@@ -238,6 +247,22 @@ func (b *Bot) cmdDownload(ctx context.Context, msg *tg.Message, args string) {
 		ChatID: msg.Chat.ID,
 		Text:   fmt.Sprintf("📥 任务已创建\nID: %d\n文件: %s\n状态: 排队中", t.ID, filename),
 	})
+}
+
+// uiStatusForStage maps a task stage label to a UI status key.
+func uiStatusForStage(stage string) string {
+	switch {
+	case strings.Contains(stage, "下载"):
+		return "downloading"
+	case strings.Contains(stage, "上传"):
+		return "uploading"
+	case strings.Contains(stage, "排队"):
+		return "queued"
+	case strings.Contains(stage, "暂停"):
+		return "paused"
+	default:
+		return "processing"
+	}
 }
 
 func (b *Bot) cmdList(ctx context.Context, msg *tg.Message, args string) {
@@ -387,10 +412,10 @@ func (b *Bot) startYtDlDownload(ctx context.Context, msg *tg.Message, info *ytdl
 		_ = b.tg.Edit(cctx, msg.Chat.ID, statusID, "⏳ 正在上传到 Google Drive…")
 		link, err := b.upload(cctx, msg.From.ID, path, filepath.Base(path))
 		if err != nil {
-			_ = b.tg.Edit(cctx, msg.Chat.ID, statusID, "❌ 上传失败: "+err.Error())
+			_ = b.tg.Edit(cctx, msg.Chat.ID, statusID, ui.FormatError("上传失败", err.Error(), "重试 /ytdl"))
 			return
 		}
-		_ = b.tg.Edit(cctx, msg.Chat.ID, statusID, "✅ 完成: "+link)
+		_ = b.tg.Edit(cctx, msg.Chat.ID, statusID, ui.FormatSuccess("完成", link))
 	}()
 }
 
