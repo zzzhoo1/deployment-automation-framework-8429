@@ -25,11 +25,11 @@ import (
 // Bot is the running application.
 type Bot struct {
 	cfg   *config.Config
-	tg    *tg.Client
-	drive *gdrive.Client
-	tasks *task.Manager
-	store *store.Store
-	ytdlp *ytdlp.Client
+	tg    tgClient
+	drive driveClient
+	tasks taskManager
+	store storeIface
+	ytdlp ytdlpClient
 
 	pendingMu       sync.Mutex
 	pendingAuth     map[int64]string // userID -> OAuth state
