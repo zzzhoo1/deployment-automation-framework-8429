@@ -1,4 +1,4 @@
-.PHONY: build test run fmt vet
+.PHONY: build test run fmt vet docker docker-run
 
 build:
 	go build ./...
@@ -14,3 +14,9 @@ fmt:
 
 vet:
 	go vet ./...
+
+docker:
+	docker build -t gdrive-bot .
+
+docker-run:
+	docker run --rm -it --env-file .env -v $(PWD)/data:/data -v $(PWD)/downloads:/downloads gdrive-bot
