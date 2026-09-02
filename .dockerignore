@@ -1,0 +1,26 @@
+# VCS
+.git
+.gitignore
+
+# Runtime data (not needed in the image)
+data/
+downloads/
+.env
+.envrc
+
+# Test/CI artifacts
+*.test
+*.out
+coverage.out
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Docs / misc (not needed to build the binary)
+README.md
+LICENSE
+Makefile
+docker-compose.yml
+.github/

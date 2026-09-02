@@ -95,6 +95,15 @@ cp .env.example .env   # fill in BOT_TOKEN + Google credentials
 docker compose up -d --build
 ```
 
+A `.github/workflows/release.yml` builds and pushes the image to GitHub
+Container Registry (ghcr.io) on every `v*` tag, with semver, major.minor, and
+sha tags:
+
+```sh
+git tag v1.0.0 && git push origin v1.0.0
+# -> ghcr.io/<owner>/deployment-automation-framework-8429:v1.0.0
+```
+
 ### Notes
 
 - The rewrite covers the original's core mirror + Drive-management + auth +
