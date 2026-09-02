@@ -287,16 +287,17 @@ func (c *Client) serviceAccountToken(ctx context.Context) (string, error) {
 	return tok.AccessToken, nil
 }
 
-// File is a Drive file metadata object.
+// File is a Drive file metadata object. Field JSON tags match the Drive API
+// v3 camelCase field names (as requested in the fields= query parameter).
 type File struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
-	MimeType string   `json:"mime_type"`
+	MimeType string   `json:"mimeType"`
 	Size     string   `json:"size"`
-	Created  string   `json:"created_time"`
-	Modified string   `json:"modified_time"`
+	Created  string   `json:"createdTime"`
+	Modified string   `json:"modifiedTime"`
 	Parents  []string `json:"parents"`
-	WebLink  string   `json:"web_link"`
+	WebLink  string   `json:"webLink"`
 }
 
 // ListFiles lists files in a folder ("" = My Drive root).

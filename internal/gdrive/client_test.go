@@ -140,6 +140,12 @@ func jsonString(t *testing.T, s string) string {
 	return string(b)
 }
 
+// nowPlus returns a time in the future for token-expiry test setup.
+func nowPlus(t *testing.T) time.Time {
+	t.Helper()
+	return time.Now().Add(time.Hour)
+}
+
 func TestAuthURL(t *testing.T) {
 	c := NewOAuthClient("client-id-123", "secret-456")
 	u := c.AuthURL("state-abc")

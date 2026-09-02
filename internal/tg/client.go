@@ -182,19 +182,21 @@ func (c *Client) call(ctx context.Context, method string, form url.Values, out a
 	if httpResp.StatusCode != http.StatusOK {
 		return fmt.Errorf("telegram %s: HTTP %d: %s", method, httpResp.StatusCode, string(data))
 	}
+	var envelope struct {
+		OK  bool   `json:"ok"`
+		Err string `json:"description"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return fmt.Errorf("telegram %s: decode envelope: %w", method, err)
+	}
+	if !envelope.OK {
+		return fmt.Errorf("telegram %s: %s", method, envelope.Err)
+	}
 	if out == nil {
 		return nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("telegram %s: decode: %w", method, err)
-	}
-	var envelope struct {
-		OK  bool   `json:"ok"`
-		Err string `json:"description"`
-	}
-	_ = json.Unmarshal(data, &envelope)
-	if !envelope.OK {
-		return fmt.Errorf("telegram %s: %s", method, envelope.Err)
 	}
 	return nil
 }
