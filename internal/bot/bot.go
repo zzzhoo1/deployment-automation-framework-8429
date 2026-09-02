@@ -533,7 +533,7 @@ func splitCommand(text string) (string, string) {
 	}
 	rest := text[1:]
 	if i := strings.IndexAny(rest, " \t"); i >= 0 {
-		return strings.ToLower(rest[:i]), rest[i+1:]
+		return strings.ToLower(rest[:i]), strings.TrimSpace(rest[i+1:])
 	}
 	return strings.ToLower(rest), ""
 }
@@ -541,12 +541,16 @@ func splitCommand(text string) (string, string) {
 // extractID pulls a Drive file/folder ID out of a raw ID or a web link.
 func extractID(raw string) string {
 	raw = strings.TrimSpace(raw)
-	re := regexp.MustCompile(`/[?&]id=([a-zA-Z0-9_-]+)`)
+	re := regexp.MustCompile(`[?&]id=([a-zA-Z0-9_-]+)`)
 	if m := re.FindStringSubmatch(raw); m != nil {
 		return m[1]
 	}
-	re2 := regexp.MustCompile(`/folders/([a-zA-Z0-9_-]+)`)
+	re2 := regexp.MustCompile(`/file/d/([a-zA-Z0-9_-]+)`)
 	if m := re2.FindStringSubmatch(raw); m != nil {
+		return m[1]
+	}
+	re3 := regexp.MustCompile(`/folders/([a-zA-Z0-9_-]+)`)
+	if m := re3.FindStringSubmatch(raw); m != nil {
 		return m[1]
 	}
 	if !strings.Contains(raw, "/") && len(raw) > 8 {
