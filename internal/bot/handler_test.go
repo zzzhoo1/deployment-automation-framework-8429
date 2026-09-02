@@ -7,7 +7,7 @@ import (
 )
 
 func TestCmdAuthMode(t *testing.T) {
-	b, tg, _, _, _ := newTestBot()
+	b, tg, _, _, _, _ := newTestBot()
 	ctx := context.Background()
 
 	// No arg: reports current mode.
@@ -31,7 +31,7 @@ func TestCmdAuthMode(t *testing.T) {
 }
 
 func TestCmdRevoke(t *testing.T) {
-	b, tg, _, st, _ := newTestBot()
+	b, tg, _, st, _, _ := newTestBot()
 	ctx := context.Background()
 	// Seed a credential then revoke it.
 	_ = st.SaveCredential(mustCred(1))
@@ -45,7 +45,7 @@ func TestCmdRevoke(t *testing.T) {
 }
 
 func TestCmdSetFolder(t *testing.T) {
-	b, tg, _, _, _ := newTestBot()
+	b, tg, _, _, _, _ := newTestBot()
 	ctx := context.Background()
 	b.cmdSetFolder(ctx, msg(1, 1, "/setfolder https://drive.google.com/drive/folders/abc123"), "https://drive.google.com/drive/folders/abc123")
 	if !strings.Contains(tg.lastText(), "abc123") {
@@ -62,7 +62,7 @@ func TestCmdSetFolder(t *testing.T) {
 }
 
 func TestCmdEmptyTrash(t *testing.T) {
-	b, tg, _, _, drive := newTestBot()
+	b, tg, _, _, drive, _ := newTestBot()
 	ctx := context.Background()
 	b.cmdEmptyTrash(ctx, msg(1, 1, "/emptytrash"))
 	if !strings.Contains(tg.lastText(), "回收站已清空") {
@@ -77,7 +77,7 @@ func TestCmdEmptyTrash(t *testing.T) {
 }
 
 func TestHandleCallbackMirror(t *testing.T) {
-	b, _, tasks, _, _ := newTestBot()
+	b, _, tasks, _, _, _ := newTestBot()
 	ctx := context.Background()
 	b.handleCallback(ctx, tgCallback("mirror:42:pause"))
 	b.handleCallback(ctx, tgCallback("mirror:42:resume"))
@@ -94,7 +94,7 @@ func TestHandleCallbackMirror(t *testing.T) {
 }
 
 func TestCmdDownloadValidation(t *testing.T) {
-	b, tg, _, _, _ := newTestBot()
+	b, tg, _, _, _, _ := newTestBot()
 	ctx := context.Background()
 	// Non-sudo user (cfg.SudoUsers=[1], user 2).
 	b.cmdDownload(ctx, msg(2, 1, "/download https://x/f.txt"), "https://x/f.txt")
@@ -114,7 +114,7 @@ func TestCmdDownloadValidation(t *testing.T) {
 }
 
 func TestTryCaptureQuality(t *testing.T) {
-	b, tg, _, _, _ := newTestBot()
+	b, tg, _, _, _, _ := newTestBot()
 	ctx := context.Background()
 	// Seed a pending video for user 1.
 	b.pendingVideoMu.Lock()
