@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/config"
@@ -12,12 +13,22 @@ import (
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/ytdlp"
 )
 
+// pollResult is a canned Poll response.
+type pollResult struct {
+	updates []tg.Update
+	err     error
+}
+
 // fakeTG records sends/edits and returns canned values.
 type fakeTG struct {
 	mu       sync.Mutex
 	sent     []tg.SendOptions
 	edits    []editCall
 	lastSent int64
+
+	pollMu  sync.Mutex
+	pollSeq []pollResult
+	pollIdx int
 }
 
 type editCall struct {
@@ -45,7 +56,14 @@ func (f *fakeTG) AnswerCallback(ctx context.Context, callbackID, text string, sh
 }
 
 func (f *fakeTG) Poll(ctx context.Context, timeoutSeconds int) ([]tg.Update, error) {
-	return nil, nil
+	f.pollMu.Lock()
+	defer f.pollMu.Unlock()
+	if f.pollIdx < len(f.pollSeq) {
+		r := f.pollSeq[f.pollIdx]
+		f.pollIdx++
+		return r.updates, r.err
+	}
+	return nil, errPollDone
 }
 
 func (f *fakeTG) lastText() string {
@@ -57,6 +75,16 @@ func (f *fakeTG) lastText() string {
 	return f.sent[len(f.sent)-1].Text
 }
 
+// lastEditText returns the text of the most recent edit ("" if none).
+func (f *fakeTG) lastEditText() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.edits) == 0 {
+		return ""
+	}
+	return f.edits[len(f.edits)-1].text
+}
+
 // fakeDrive records calls and returns canned results.
 type fakeDrive struct {
 	mu          sync.Mutex
@@ -66,9 +94,14 @@ type fakeDrive struct {
 	copied      []copyCall
 	moved       []moveCall
 	deleted     []string
+	exchanged   []string
+	listErr     error
+	searchErr   error
 	copyErr     error
 	moveErr     error
 	deleteErr   error
+	uploadErr   error
+	exchangeErr error
 }
 
 type copyCall struct{ src, dst string }
@@ -76,15 +109,21 @@ type moveCall struct{ src, dst string }
 
 func (f *fakeDrive) AuthURL(state string) string { return "https://auth?state=" + state }
 func (f *fakeDrive) ExchangeCode(ctx context.Context, code string) error {
-	return nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.exchanged = append(f.exchanged, code)
+	return f.exchangeErr
 }
 func (f *fakeDrive) ListFiles(ctx context.Context, folderID string) ([]gdrive.File, error) {
-	return f.listFiles, nil
+	return f.listFiles, f.listErr
 }
 func (f *fakeDrive) SearchFiles(ctx context.Context, keyword string) ([]gdrive.File, error) {
-	return f.searchFiles, nil
+	return f.searchFiles, f.searchErr
 }
 func (f *fakeDrive) Upload(ctx context.Context, path, folderID, name string) (*gdrive.File, error) {
+	if f.uploadErr != nil {
+		return nil, f.uploadErr
+	}
 	return &gdrive.File{ID: "up", WebLink: "https://drive.google.com/up"}, nil
 }
 func (f *fakeDrive) Copy(ctx context.Context, fileID, destFolder string) (*gdrive.File, error) {
@@ -116,13 +155,21 @@ func (f *fakeDrive) EmptyTrash(ctx context.Context) error {
 
 // fakeTasks records pause/resume/cancel and returns a canned task.
 type fakeTasks struct {
-	mu       sync.Mutex
-	paused   []int64
-	resumed  []int64
-	canceled []int64
+	mu        sync.Mutex
+	paused    []int64
+	resumed   []int64
+	canceled  []int64
+	submitted []string
+	submitErr error
 }
 
 func (f *fakeTasks) Submit(ctx context.Context, userID, chatID int64, urlStr, filename string, onProgress task.ProgressFunc) (*task.Task, error) {
+	f.mu.Lock()
+	f.submitted = append(f.submitted, urlStr)
+	f.mu.Unlock()
+	if f.submitErr != nil {
+		return nil, f.submitErr
+	}
 	return &task.Task{}, nil
 }
 func (f *fakeTasks) Pause(id int64) bool {
@@ -146,8 +193,10 @@ func (f *fakeTasks) Cancel(id int64) bool {
 
 // fakeStore is an in-memory credential store.
 type fakeStore struct {
-	mu    sync.Mutex
-	creds map[int64]*store.CredentialRecord
+	mu        sync.Mutex
+	creds     map[int64]*store.CredentialRecord
+	saved     []store.CredentialRecord
+	deleteErr error
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{creds: map[int64]*store.CredentialRecord{}} }
@@ -157,6 +206,7 @@ func (f *fakeStore) SaveCredential(rec store.CredentialRecord) error {
 	defer f.mu.Unlock()
 	r := rec
 	f.creds[rec.UserID] = &r
+	f.saved = append(f.saved, rec)
 	return nil
 }
 func (f *fakeStore) GetCredential(userID int64) *store.CredentialRecord {
@@ -168,45 +218,59 @@ func (f *fakeStore) DeleteCredential(userID int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.creds, userID)
-	return nil
+	return f.deleteErr
 }
 func (f *fakeStore) SaveTask(rec store.TaskRecord) error { return nil }
 func (f *fakeStore) GetTask(id int64) *store.TaskRecord  { return nil }
 
-// fakeYtdlp returns a canned video with two qualities.
-type fakeYtdlp struct{}
+// fakeYtdlp returns canned video info and download results.
+type fakeYtdlp struct {
+	mu          sync.Mutex
+	available   bool
+	info        *ytdlp.Info
+	infoErr     error
+	downloadErr error
+	downloaded  []string
+}
 
-func (f *fakeYtdlp) Available() bool { return true }
+func (f *fakeYtdlp) Available() bool { return f.available }
 func (f *fakeYtdlp) Info(ctx context.Context, url string) (*ytdlp.Info, error) {
-	return &ytdlp.Info{
-		Title:      "V",
-		WebPageURL: url,
-		Formats:    []ytdlp.Quality{{FormatID: "1", Label: "360p", Height: 360}, {FormatID: "2", Label: "720p", Height: 720}},
-	}, nil
+	return f.info, f.infoErr
 }
 func (f *fakeYtdlp) Download(ctx context.Context, url, quality, outDir string) (string, error) {
+	f.mu.Lock()
+	f.downloaded = append(f.downloaded, quality)
+	f.mu.Unlock()
+	if f.downloadErr != nil {
+		return "", f.downloadErr
+	}
 	return outDir + "/V.mp4", nil
 }
 
 // newTestBot wires a Bot with fakes for handler testing.
-func newTestBot() (*Bot, *fakeTG, *fakeTasks, *fakeStore, *fakeDrive) {
+func newTestBot() (*Bot, *fakeTG, *fakeTasks, *fakeStore, *fakeDrive, *fakeYtdlp) {
 	tg := &fakeTG{}
 	tasks := &fakeTasks{}
 	st := newFakeStore()
 	drive := &fakeDrive{}
-	cfg := &config.Config{BotToken: "t", DefaultAuthMode: "oauth", SudoUsers: []int64{1}}
+	ytd := &fakeYtdlp{available: true, info: &ytdlp.Info{
+		Title:      "V",
+		WebPageURL: "https://example.com/v",
+		Formats:    []ytdlp.Quality{{FormatID: "1", Label: "360p", Height: 360}, {FormatID: "2", Label: "720p", Height: 720}},
+	}}
+	cfg := &config.Config{BotToken: "t", DefaultAuthMode: "oauth", SudoUsers: []int64{1}, DownloadDirectory: "/tmp/dl", DataDir: "/tmp/dd"}
 	b := &Bot{
 		cfg:           cfg,
 		tg:            tg,
 		drive:         drive,
 		tasks:         tasks,
 		store:         st,
-		ytdlp:         &fakeYtdlp{},
+		ytdlp:         ytd,
 		pendingAuth:   map[int64]string{},
 		defaultFolder: map[int64]string{},
 		pendingVideo:  map[int64]*ytdlp.Info{},
 	}
-	return b, tg, tasks, st, drive
+	return b, tg, tasks, st, drive, ytd
 }
 
 func msg(fromID, chatID int64, text string) *tg.Message {
@@ -218,7 +282,7 @@ func tgCallback(data string) *tg.CallbackQuery {
 }
 
 func mustCred(userID int64) store.CredentialRecord {
-	return store.CredentialRecord{UserID: userID, Mode: "oauth", Payload: map[string]string{"refresh_token": "r"}}
+	return store.CredentialRecord{UserID: userID, Mode: "oauth", Payload: map[string]string{"refresh_token": "***"}}
 }
 
 func ytdlpInfo() *ytdlp.Info {
@@ -233,3 +297,6 @@ func ytdlpInfo() *ytdlp.Info {
 type errBoom struct{}
 
 func (errBoom) Error() string { return "boom" }
+
+// errPollDone signals the fake Poll sequence is exhausted so Run() can exit.
+var errPollDone = errors.New("poll sequence exhausted")
