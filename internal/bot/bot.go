@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/config"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/gdrive"
+	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/store"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/task"
 	"github.com/zzzhoo1/deployment-automation-framework-8429/internal/tg"
 )
@@ -20,6 +22,12 @@ type Bot struct {
 	tg    *tg.Client
 	drive *gdrive.Client
 	tasks *task.Manager
+	store *store.Store
+
+	pendingMu       sync.Mutex
+	pendingAuth     map[int64]string // userID -> OAuth state
+	defaultFolderMu sync.Mutex
+	defaultFolder   map[int64]string // userID -> default upload folder ID
 }
 
 // New constructs a Bot from configuration.
@@ -27,20 +35,31 @@ func New(cfg *config.Config) (*Bot, error) {
 	if cfg.BotToken == "" {
 		return nil, fmt.Errorf("bot: BOT_TOKEN is required")
 	}
-	drive := gdrive.NewOAuthClient(cfg.GDriveClientID, cfg.GDriveClientSecret)
-	upload := func(ctx context.Context, path, filename string) (string, error) {
-		file, err := drive.Upload(ctx, path, "", filename)
-		if err != nil {
-			return "", err
-		}
-		return file.WebLink, nil
+	s, err := store.New(cfg.DataDir + "/bot.json")
+	if err != nil {
+		return nil, fmt.Errorf("bot: open store: %w", err)
 	}
-	return &Bot{
-		cfg:   cfg,
-		tg:    tg.NewClient(cfg.BotToken),
-		drive: drive,
-		tasks: task.NewManager(cfg.DownloadDirectory, cfg.MaxConcurrentMirrors, upload),
-	}, nil
+	drive := gdrive.NewOAuthClient(cfg.GDriveClientID, cfg.GDriveClientSecret)
+	b := &Bot{
+		cfg:           cfg,
+		tg:            tg.NewClient(cfg.BotToken),
+		drive:         drive,
+		store:         s,
+		pendingAuth:   map[int64]string{},
+		defaultFolder: map[int64]string{},
+	}
+	b.tasks = task.NewManager(cfg.DownloadDirectory, cfg.MaxConcurrentMirrors, b.upload)
+	return b, nil
+}
+
+// upload performs the Drive upload step for a mirror task, honoring the
+// user's configured default folder.
+func (b *Bot) upload(ctx context.Context, userID int64, path, filename string) (string, error) {
+	file, err := b.drive.Upload(ctx, path, b.defaultUploadFolder(userID), filename)
+	if err != nil {
+		return "", err
+	}
+	return file.WebLink, nil
 }
 
 // Run starts the long-polling loop and dispatches updates until ctx ends.
@@ -80,6 +99,14 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tg.Message) {
 		b.cmdStart(ctx, msg)
 	case "auth":
 		b.cmdAuth(ctx, msg)
+	case "authmode":
+		b.cmdAuthMode(ctx, msg, args)
+	case "revoke":
+		b.cmdRevoke(ctx, msg)
+	case "setfolder", "setfl":
+		b.cmdSetFolder(ctx, msg, args)
+	case "emptytrash", "emptyTrash":
+		b.cmdEmptyTrash(ctx, msg)
 	case "download", "dl":
 		b.cmdDownload(ctx, msg, args)
 	case "list", "ls":
@@ -93,6 +120,11 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tg.Message) {
 	case "delete", "del":
 		b.cmdDelete(ctx, msg, args)
 	default:
+		// A plain message that looks like a Google OAuth code is treated as
+		// the auth-code capture step (the user pastes the code after /auth).
+		if b.tryCaptureAuthCode(ctx, msg) {
+			return
+		}
 		b.cmdUnknown(ctx, msg, cmd)
 	}
 }
@@ -120,11 +152,15 @@ func (b *Bot) cmdStart(ctx context.Context, msg *tg.Message) {
 	const text = "👋 欢迎使用 Google Drive 上传器\n\n" +
 		"📥 /download <url>  下载直链并上传到 Drive\n" +
 		"🔐 /auth  授权 Google Drive\n" +
+		"🔑 /revoke  撤销授权\n" +
+		"⚙️ /authmode oauth|service_account  切换授权模式\n" +
+		"📁 /setfolder <id>  设置默认上传文件夹\n" +
 		"📂 /list [folder]  浏览目录\n" +
 		"🔍 /search <keyword>  搜索文件\n" +
 		"📋 /copy <src> <dst>  复制文件\n" +
 		"➡️ /move <src> <dst>  移动文件\n" +
-		"🗑 /delete <file>  删除文件"
+		"🗑 /delete <file>  删除文件\n" +
+		"🧹 /emptytrash  清空回收站"
 	_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: text})
 }
 
@@ -135,6 +171,9 @@ func (b *Bot) cmdAuth(ctx context.Context, msg *tg.Message) {
 	}
 	state := fmt.Sprintf("u%d", msg.From.ID)
 	link := b.drive.AuthURL(state)
+	b.pendingMu.Lock()
+	b.pendingAuth[msg.From.ID] = state
+	b.pendingMu.Unlock()
 	_, _ = b.tg.Send(ctx, tg.SendOptions{
 		ChatID: msg.Chat.ID,
 		Text:   "🔐 点击授权，然后把返回页面里的 code 发给我：\n" + link,
@@ -282,6 +321,81 @@ func (b *Bot) cmdUnknown(ctx context.Context, msg *tg.Message, cmd string) {
 		return
 	}
 	_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "❓ 未知命令 /" + cmd + "，发送 /help 查看帮助"})
+}
+
+// tryCaptureAuthCode handles a plain message that is a Google OAuth code
+// following /auth. Returns true if the message was consumed.
+func (b *Bot) tryCaptureAuthCode(ctx context.Context, msg *tg.Message) bool {
+	b.pendingMu.Lock()
+	_, ok := b.pendingAuth[msg.From.ID]
+	b.pendingMu.Unlock()
+	if !ok {
+		return false
+	}
+	code := strings.TrimSpace(msg.Text)
+	if !regexp.MustCompile(`^[A-Za-z0-9._~-]{20,}$`).MatchString(code) {
+		return false
+	}
+	if err := b.drive.ExchangeCode(ctx, code); err != nil {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "❌ 授权码无效: " + err.Error()})
+		return true
+	}
+	rec := store.CredentialRecord{UserID: msg.From.ID, Mode: "oauth"}
+	_ = b.store.SaveCredential(rec)
+	b.pendingMu.Lock()
+	delete(b.pendingAuth, msg.From.ID)
+	b.pendingMu.Unlock()
+	_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "✅ Google Drive 授权成功"})
+	return true
+}
+
+func (b *Bot) cmdAuthMode(ctx context.Context, msg *tg.Message, args string) {
+	mode := strings.ToLower(strings.TrimSpace(args))
+	if mode == "" {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "当前模式: " + b.cfg.DefaultAuthMode + "\n用法: /authmode oauth|service_account"})
+		return
+	}
+	if mode != "oauth" && mode != "service_account" {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "⚠️ 模式需为 oauth 或 service_account"})
+		return
+	}
+	b.cfg.DefaultAuthMode = mode
+	_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "✅ 已切换授权模式: " + mode})
+}
+
+func (b *Bot) cmdRevoke(ctx context.Context, msg *tg.Message) {
+	if err := b.store.DeleteCredential(msg.From.ID); err != nil {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "❌ " + err.Error()})
+		return
+	}
+	_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "🔑 已撤销当前账户的 Drive 授权"})
+}
+
+func (b *Bot) cmdSetFolder(ctx context.Context, msg *tg.Message, args string) {
+	id := extractID(strings.TrimSpace(args))
+	if id == "" {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "用法: /setfolder <文件夹ID或链接>"})
+		return
+	}
+	b.defaultFolderMu.Lock()
+	b.defaultFolder[msg.From.ID] = id
+	b.defaultFolderMu.Unlock()
+	_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "📁 默认上传文件夹已设为: " + id})
+}
+
+func (b *Bot) cmdEmptyTrash(ctx context.Context, msg *tg.Message) {
+	if err := b.drive.EmptyTrash(ctx); err != nil {
+		_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "❌ " + err.Error()})
+		return
+	}
+	_, _ = b.tg.Send(ctx, tg.SendOptions{ChatID: msg.Chat.ID, Text: "🧹 回收站已清空"})
+}
+
+// defaultUploadFolder returns the user's configured default folder ("" = root).
+func (b *Bot) defaultUploadFolder(userID int64) string {
+	b.defaultFolderMu.Lock()
+	defer b.defaultFolderMu.Unlock()
+	return b.defaultFolder[userID]
 }
 
 // splitCommand splits "/cmd args" into the command (without slash) and args.

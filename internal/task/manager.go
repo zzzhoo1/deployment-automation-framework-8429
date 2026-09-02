@@ -69,8 +69,8 @@ func (t *Task) SetStage(stage string) {
 type ProgressFunc func(taskID int64, stage string, status Status)
 
 // UploadFunc uploads a local file to Drive and returns a human-readable
-// result (e.g. the web link).
-type UploadFunc func(ctx context.Context, path, filename string) (string, error)
+// result (e.g. the web link). userID identifies the owning user.
+type UploadFunc func(ctx context.Context, userID int64, path, filename string) (string, error)
 
 // Manager owns and schedules mirror tasks.
 type Manager struct {
@@ -220,7 +220,7 @@ func (m *Manager) run(ctx context.Context, t *Task, onProgress ProgressFunc) {
 		}
 		return
 	}
-	result, uerr := m.upload(ctx, tmp, t.Filename)
+	result, uerr := m.upload(ctx, t.UserID, tmp, t.Filename)
 	if uerr != nil {
 		t.mu.Lock()
 		if t.status == StatusCanceled {

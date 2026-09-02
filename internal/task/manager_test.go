@@ -38,7 +38,7 @@ func TestSubmitDownloadUpload(t *testing.T) {
 	defer srv.Close()
 
 	var uploaded string
-	mgr := NewManager(t.TempDir(), 2, func(ctx context.Context, path, filename string) (string, error) {
+	mgr := NewManager(t.TempDir(), 2, func(ctx context.Context, userID int64, path, filename string) (string, error) {
 		uploaded = filename
 		return "https://drive.google.com/file/d/abc", nil
 	})
@@ -67,7 +67,7 @@ func TestSubmitDownloadUpload(t *testing.T) {
 }
 
 func TestCancel(t *testing.T) {
-	mgr := NewManager(t.TempDir(), 1, func(ctx context.Context, path, filename string) (string, error) {
+	mgr := NewManager(t.TempDir(), 1, func(ctx context.Context, userID int64, path, filename string) (string, error) {
 		return "link", nil
 	})
 	t1, _ := mgr.Submit(context.Background(), 1, 2, "https://example.com/x", "x", nil)

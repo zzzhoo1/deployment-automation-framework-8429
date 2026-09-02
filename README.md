@@ -17,8 +17,11 @@ implements the core functionality:
   service-account (JWT) auth, multipart upload, list, search, copy, move, delete.
 - **Mirror task pipeline** (`internal/task`) — download a URL then upload to Drive,
   with pause / resume / cancel and progress callbacks, bounded concurrency.
-- **Command handlers** (`internal/bot`) — `/start`, `/help`, `/auth`, `/download`,
-  `/list`, `/search`, `/copy`, `/move`, `/delete`.
+- **Persistence** (`internal/store`) — file-backed credential and task store
+  (replaces the original's SQLite layer, keeping the project dependency-free).
+- **Command handlers** (`internal/bot`) — `/start`, `/help`, `/auth`, `/authmode`,
+  `/revoke`, `/setfolder`, `/emptytrash`, `/download`, `/list`, `/search`, `/copy`,
+  `/move`, `/delete`.
 
 ### Layout
 
@@ -28,6 +31,7 @@ internal/config/       environment-based configuration
 internal/tg/           Telegram Bot API client
 internal/gdrive/       Google Drive API client (OAuth + service account)
 internal/task/         mirror task manager (download -> upload, pause/resume/cancel)
+internal/store/        file-backed credential/task persistence
 internal/bot/          command handlers wiring the above together
 ```
 
@@ -50,6 +54,7 @@ All configuration is read from environment variables (see `.env.example`):
 | `G_DRIVE_CLIENT_SECRET` | Google OAuth client secret |
 | `G_DRIVE_CLIENT_SECRET_SA` | Service-account JSON key (optional, alternative to OAuth) |
 | `DOWNLOAD_DIRECTORY` | Local temp dir for downloads (default `./downloads/`) |
+| `DATA_DIR` | Persistence dir for credentials/tasks (default `./data/`) |
 | `MAX_MIRROR_FILE_SIZE` | Max file size in bytes (default 10 GiB) |
 | `MAX_CONCURRENT_MIRRORS` | Concurrent mirror tasks (default 2) |
 | `SUDO_USERS` | Space/comma separated Telegram user IDs (empty = allow all) |
@@ -59,6 +64,7 @@ All configuration is read from environment variables (see `.env.example`):
 ### Notes
 
 - The rewrite focuses on the core mirror + Drive-management surface. The original's
-  UI animation layer, SQLite persistence, and yt-dlp integration are intentionally
-  left out of this first pass; the task manager's `UploadFunc` hook is the seam where
-  those would be wired in.
+  UI animation layer and yt-dlp integration are intentionally left out of this pass;
+  the task manager's `UploadFunc` hook is the seam where those would be wired in.
+  Persistence is provided by `internal/store` (JSON file) in place of the original's
+  SQLite/SQLAlchemy layer.
