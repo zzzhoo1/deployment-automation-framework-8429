@@ -225,8 +225,9 @@ func (c *Client) Token(ctx context.Context) (string, error) {
 }
 
 // serviceAccountToken mints an OAuth2 token from a signed JWT (JWT grant).
-func (c *Client) serviceAccountToken(ctx context.Context) (string, error) {
-	now := time.Now()
+// buildServiceAccountJWT constructs and signs the JWT assertion used for the
+// service-account OAuth grant. It is pure (no I/O) so it can be unit-tested.
+func buildServiceAccountJWT(email string, key *rsa.PrivateKey, scopes []string, now time.Time) (string, error) {
 	claims := struct {
 		Iss   string `json:"iss"`
 		Scope string `json:"scope"`
@@ -234,8 +235,8 @@ func (c *Client) serviceAccountToken(ctx context.Context) (string, error) {
 		Exp   int64  `json:"exp"`
 		Iat   int64  `json:"iat"`
 	}{
-		Iss:   c.saEmail,
-		Scope: strings.Join(c.saScopes, " "),
+		Iss:   email,
+		Scope: strings.Join(scopes, " "),
 		Aud:   jwtAudience,
 		Exp:   now.Add(time.Hour).Unix(),
 		Iat:   now.Unix(),
@@ -248,12 +249,18 @@ func (c *Client) serviceAccountToken(ctx context.Context) (string, error) {
 	signingInput := base64.RawURLEncoding.EncodeToString(headerJSON) + "." +
 		base64.RawURLEncoding.EncodeToString(claimJSON)
 	digest := sha256.Sum256([]byte(signingInput))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, c.saKey, crypto.SHA256, digest[:])
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
 	if err != nil {
 		return "", err
 	}
-	jwt := signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
 
+func (c *Client) serviceAccountToken(ctx context.Context) (string, error) {
+	jwt, err := buildServiceAccountJWT(c.saEmail, c.saKey, c.saScopes, time.Now())
+	if err != nil {
+		return "", err
+	}
 	form := url.Values{}
 	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
 	form.Set("assertion", jwt)
