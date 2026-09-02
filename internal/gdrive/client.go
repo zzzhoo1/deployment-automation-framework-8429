@@ -512,6 +512,30 @@ func (c *Client) Delete(ctx context.Context, fileID string) error {
 	return nil
 }
 
+// EmptyTrash permanently deletes all trashed files.
+func (c *Client) EmptyTrash(ctx context.Context) error {
+	tok, err := c.Token(ctx)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		fmt.Sprintf("%s/trash?enforceTrashExpiration=true", driveAPI), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("gdrive: emptytrash: HTTP %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
 func textHeaders(v string) map[string][]string {
 	return map[string][]string{"Content-Type": {v}}
 }

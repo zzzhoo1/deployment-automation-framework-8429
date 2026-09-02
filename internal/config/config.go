@@ -21,6 +21,7 @@ type Config struct {
 	GDriveServiceAccountJSON string
 	// Storage
 	DownloadDirectory string
+	DataDir           string
 	// Limits
 	MaxMirrorFileSize    int64
 	MaxConcurrentMirrors int
@@ -40,6 +41,7 @@ func Load() *Config {
 		GDriveClientSecret:       os.Getenv("G_DRIVE_CLIENT_SECRET"),
 		GDriveServiceAccountJSON: os.Getenv("G_DRIVE_CLIENT_SECRET_SA"),
 		DownloadDirectory:        envOr("DOWNLOAD_DIRECTORY", "./downloads/"),
+		DataDir:                  envOr("DATA_DIR", "./data/"),
 		MaxMirrorFileSize:        envInt64Or("MAX_MIRROR_FILE_SIZE", 10*1024*1024*1024),
 		MaxConcurrentMirrors:     envIntOr("MAX_CONCURRENT_MIRRORS", 2),
 		SudoUsers:                parseIDs(os.Getenv("SUDO_USERS")),
