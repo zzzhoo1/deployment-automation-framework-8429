@@ -9,7 +9,7 @@ import (
 )
 
 func TestCmdList(t *testing.T) {
-	b, tg, _, _, drive := newTestBot()
+	b, tg, _, _, drive, _ := newTestBot()
 	drive.listFiles = []gdrive.File{
 		{Name: "docs", MimeType: "folder"},
 		{Name: "a.txt", MimeType: "text/plain"},
@@ -22,7 +22,7 @@ func TestCmdList(t *testing.T) {
 }
 
 func TestCmdListEmpty(t *testing.T) {
-	b, tg, _, _, _ := newTestBot()
+	b, tg, _, _, _, _ := newTestBot()
 	b.cmdList(context.Background(), msg(1, 1, "/list"), "")
 	if !strings.Contains(tg.lastText(), "(空)") {
 		t.Errorf("empty list = %q", tg.lastText())
@@ -30,7 +30,7 @@ func TestCmdListEmpty(t *testing.T) {
 }
 
 func TestCmdSearch(t *testing.T) {
-	b, tg, _, _, drive := newTestBot()
+	b, tg, _, _, drive, _ := newTestBot()
 	drive.searchFiles = []gdrive.File{{Name: "report.pdf", WebLink: "https://drive.google.com/r"}}
 	b.cmdSearch(context.Background(), msg(1, 1, "/search report"), "report")
 	out := tg.lastText()
@@ -45,7 +45,7 @@ func TestCmdSearch(t *testing.T) {
 }
 
 func TestCmdCopy(t *testing.T) {
-	b, tg, _, _, drive := newTestBot()
+	b, tg, _, _, drive, _ := newTestBot()
 	b.cmdCopy(context.Background(), msg(1, 1, "/copy srcID123 dstID456"), "srcID123 dstID456")
 	if !strings.Contains(tg.lastText(), "已复制") {
 		t.Errorf("copy = %q", tg.lastText())
@@ -61,7 +61,7 @@ func TestCmdCopy(t *testing.T) {
 }
 
 func TestCmdMove(t *testing.T) {
-	b, tg, _, _, drive := newTestBot()
+	b, tg, _, _, drive, _ := newTestBot()
 	b.cmdMove(context.Background(), msg(1, 1, "/move a b"), "a b")
 	if !strings.Contains(tg.lastText(), "已移动") {
 		t.Errorf("move = %q", tg.lastText())
@@ -72,7 +72,7 @@ func TestCmdMove(t *testing.T) {
 }
 
 func TestCmdDelete(t *testing.T) {
-	b, tg, _, _, drive := newTestBot()
+	b, tg, _, _, drive, _ := newTestBot()
 	b.cmdDelete(context.Background(), msg(1, 1, "/delete fileID789"), "fileID789")
 	if !strings.Contains(tg.lastText(), "已删除") {
 		t.Errorf("delete = %q", tg.lastText())
@@ -88,7 +88,7 @@ func TestCmdDelete(t *testing.T) {
 }
 
 func TestCmdAuth(t *testing.T) {
-	b, tg, _, _, _ := newTestBot()
+	b, tg, _, _, _, _ := newTestBot()
 	// No client ID configured.
 	b.cfg.GDriveClientID = ""
 	b.cmdAuth(context.Background(), msg(1, 1, "/auth"))
@@ -110,7 +110,7 @@ func TestCmdAuth(t *testing.T) {
 }
 
 func TestCmdStart(t *testing.T) {
-	b, tg, _, _, _ := newTestBot()
+	b, tg, _, _, _, _ := newTestBot()
 	b.cmdStart(context.Background(), msg(1, 1, "/start"))
 	out := tg.lastText()
 	for _, want := range []string{"/download", "/ytdl", "/auth", "/list", "/emptytrash"} {
