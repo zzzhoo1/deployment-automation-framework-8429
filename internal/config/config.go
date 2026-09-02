@@ -31,6 +31,8 @@ type Config struct {
 	DefaultAuthMode string
 	// Polling
 	PollTimeoutSeconds int
+	// yt-dlp binary path (resolved from PATH when empty)
+	YTDLPBin string
 }
 
 // Load reads configuration from the environment, applying sane defaults.
@@ -47,6 +49,7 @@ func Load() *Config {
 		SudoUsers:                parseIDs(os.Getenv("SUDO_USERS")),
 		DefaultAuthMode:          envOr("DEFAULT_AUTH_MODE", "oauth"),
 		PollTimeoutSeconds:       envIntOr("POLL_TIMEOUT_SECONDS", 30),
+		YTDLPBin:                 os.Getenv("YTDLP_BIN"),
 	}
 }
 
