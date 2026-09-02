@@ -1,0 +1,13 @@
+services:
+  gdrive-bot:
+    build: .
+    image: gdrive-bot:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      DOWNLOAD_DIRECTORY: /downloads
+      YTDLP_BIN: /usr/bin/yt-dlp
+    volumes:
+      - ./data:/data
+      - ./downloads:/downloads
