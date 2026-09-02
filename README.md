@@ -88,6 +88,13 @@ docker build -t gdrive-bot .
 docker run --rm -it --env-file .env -v $(PWD)/data:/data -v $(PWD)/downloads:/downloads gdrive-bot
 ```
 
+A `docker-compose.yml` is also provided for a persistent deployment:
+
+```sh
+cp .env.example .env   # fill in BOT_TOKEN + Google credentials
+docker compose up -d --build
+```
+
 ### Notes
 
 - The rewrite covers the original's core mirror + Drive-management + auth +
